@@ -133,14 +133,6 @@ const getKeycloakInstance = () => {
               console.error('Auth error details: Unable to stringify error object');
             }
           }
-          
-          // EMERGENCY HANDLING: If we get a PKCE error, immediately clear URL and reload
-          if ((typeof error === 'string' && error.includes('code_challenge_method')) ||
-              (error.error_description && error.error_description.includes('code_challenge_method'))) {
-            console.log('EMERGENCY: PKCE error detected, clearing URL and reloading');
-            clearUrlParameters();
-            window.location.reload();
-          }
         } else {
           console.error('Auth error without details (undefined)');
         }
@@ -167,15 +159,6 @@ const initKeycloak = (onAuthenticatedCallback, onTokenUpdateCallback, options = 
   
   // First, log current parameters before any changes
   logRedirectParams();
-  
-  // AGGRESSIVE CHECK: If we have error in URL at this point, forcefully clear and reload
-  if (window.location.href.includes('error=') || 
-      window.location.href.includes('code_challenge_method')) {
-    console.log('ERROR DETECTED IN URL AT INITIALIZATION: Clearing and reloading...');
-    clearUrlParameters();
-    window.location.reload();
-    return Promise.resolve(false);
-  }
   
   // If we have error parameters, clear them before initializing
   const paramsCleared = clearUrlParameters();
@@ -213,15 +196,14 @@ const initKeycloak = (onAuthenticatedCallback, onTokenUpdateCallback, options = 
   try {
     const keycloak = getKeycloakInstance();
     
-    // Default initialization options - simplified for troubleshooting
-    // IMPORTANT: Disable silent check SSO and PKCE to avoid the loop and errors
+    // Default initialization options - PKCE enabled
     const defaultOptions = {
       onLoad: 'check-sso',
-      checkLoginIframe: false,  // Disable iframe check
+      checkLoginIframe: false,      // Disable iframe check
       enableLogging: true,
-      silentCheckSsoRedirectUri: null, // Disable silent SSO check
-      silentCheckSsoFallback: false,   // Disable silent SSO fallback
-      flow: 'standard'                // Ensure we use standard flow
+      pkceMethod: 'S256',           // Enable PKCE with S256 method
+      silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html',
+      flow: 'standard'              // Standard flow
     };
     
     // Merge with user provided options
@@ -265,28 +247,6 @@ const initKeycloak = (onAuthenticatedCallback, onTokenUpdateCallback, options = 
           delete window._keycloakTimeoutId;
         }
         
-        // Safely stringify the error
-        try {
-          if (error) {
-            const errorStr = typeof error === 'string' ? error : JSON.stringify(error);
-            console.error('Error details:', errorStr);
-          } else {
-            console.error('Error is undefined or null');
-          }
-        } catch (e) {
-          console.error('Error while stringifying error object:', e);
-        }
-        
-        // EMERGENCY HANDLING: If we get a PKCE error, immediately clear URL and reload
-        if (error && 
-            ((typeof error === 'string' && error.includes('code_challenge_method')) ||
-             (error.error_description && error.error_description.includes('code_challenge_method')))) {
-          console.log('EMERGENCY: PKCE error detected during initialization, clearing URL and reloading');
-          clearUrlParameters();
-          window.location.reload();
-          return false;
-        }
-        
         // Reset the initialization promise so we can try again
         initializationPromise = null;
         
@@ -317,16 +277,16 @@ const initKeycloak = (onAuthenticatedCallback, onTokenUpdateCallback, options = 
   }
 };
 
-// Use a very simple login approach without PKCE
+// Login function with PKCE enabled
 const doLogin = (options = {}) => {
   try {
     console.log('Attempting login with options:', options);
     
-    // Use a minimal set of options to avoid PKCE
+    // Use options with PKCE
     const loginOptions = {
       ...options,
-      // Explicitly exclude PKCE
-      pkceMethod: null 
+      // Enable PKCE
+      pkceMethod: 'S256'
     };
     
     // Always specify the redirect URI if not provided

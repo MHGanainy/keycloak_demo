@@ -21,9 +21,10 @@ const LoginPage = () => {
     try {
       console.log('Starting login process...');
       
-      // Use simple login options without PKCE
+      // Use login options with PKCE
       KeycloakService.doLogin({
-        redirectUri: window.location.origin + '/dashboard'
+        redirectUri: window.location.origin + '/dashboard',
+        pkceMethod: 'S256'
       });
     } catch (error) {
       console.error("Login error:", error);
@@ -74,10 +75,9 @@ const LoginPage = () => {
                         URL: {window.location.href}<br/>
                         Redirect URI: {window.location.origin + '/dashboard'}
                       </pre>
-                      <h6 className="mt-3">Note about PKCE:</h6>
-                      <div className="text-danger">
-                        PKCE has been disabled due to Keycloak configuration issues.
-                        For production, please configure your Keycloak client properly for PKCE.
+                      <h6 className="mt-3">PKCE Setup:</h6>
+                      <div className="text-success">
+                        PKCE is enabled with S256 method for enhanced security.
                       </div>
                     </div>
                   </details>
