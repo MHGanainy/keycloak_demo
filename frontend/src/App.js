@@ -36,28 +36,6 @@ function App() {
     // Skip if in iframe
     if (isInSilentCheckIframe) return;
     
-    // Check if we have error parameters in the URL and clear them
-    if (window.location.hash.includes('error=') || 
-        window.location.search.includes('error=') ||
-        window.location.href.includes('code_challenge_method')) {
-      console.log('Error parameters detected in URL. Clearing...');
-      KeycloakService.clearUrlParameters();
-      window.location.href = '/login'; // Go to login page instead of reloading
-      return; // Don't continue with initialization
-    }
-    
-    // If we already have a hash in the URL, clear it to avoid potential issues
-    if (window.location.hash) {
-      console.log('Hash detected in URL. Clearing for clean initialization.');
-      KeycloakService.clearUrlParameters();
-    }
-  }, [isInSilentCheckIframe]);
-  
-  // Main initialization effect - ALWAYS define hooks at top level
-  useEffect(() => {
-    // Skip if in iframe
-    if (isInSilentCheckIframe) return;
-    
     // Don't initialize if we have a hash or search params - this helps avoid loops
     if (window.location.hash || window.location.search) {
       console.log('Skipping Keycloak initialization because URL has parameters');
@@ -72,19 +50,48 @@ function App() {
       try {
         console.log('Starting Keycloak setup...');
         
-        // Use a simpler initialization approach
-        await KeycloakService.initKeycloak(() => {
-          console.log("Authentication callback triggered");
-        });
+        // Use a simpler initialization approach with recovery for nonce errors
+        await KeycloakService.initKeycloak(
+          () => {
+            console.log("Authentication callback triggered");
+          },
+          null,
+          { 
+            // Add recovery options
+            checkLoginIframe: false,
+            silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html',
+            pkceMethod: 'S256'
+          }
+        );
         
         console.log('Keycloak setup completed successfully');
         setKeycloakInitialized(true);
       } catch (error) {
         console.error("Failed to initialize Keycloak:", error);
         
+        // Clear storage on errors
+        try {
+          Object.keys(localStorage).forEach(key => {
+            if (key.startsWith('kc-') || key.includes('keycloak') || key.includes('token') || key.includes('nonce')) {
+              localStorage.removeItem(key);
+            }
+          });
+          Object.keys(sessionStorage).forEach(key => {
+            if (key.startsWith('kc-') || key.includes('keycloak') || key.includes('token') || key.includes('nonce')) {
+              sessionStorage.removeItem(key);
+            }
+          });
+        } catch (e) {
+          console.warn('Error clearing storage on init error:', e);
+        }
+        
         // Special handling for PKCE errors - directly go to login
-        if (error.message && error.message.includes('code_challenge_method')) {
-          console.log('PKCE error detected - redirecting to login page');
+        if (error.message && (
+            error.message.includes('code_challenge_method') || 
+            error.message.includes('nonce') ||
+            error.message.includes('token')
+        )) {
+          console.log('PKCE/nonce error detected - redirecting to login page');
           KeycloakService.clearUrlParameters();
           window.location.href = '/login';
           return;
@@ -95,7 +102,7 @@ function App() {
     };
     
     setupKeycloak();
-  }, [isInSilentCheckIframe]); 
+  }, [isInSilentCheckIframe])
   
   // Protected route component
   const PrivateRoute = ({ children }) => {

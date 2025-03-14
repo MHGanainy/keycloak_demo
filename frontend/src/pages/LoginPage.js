@@ -21,10 +21,14 @@ const LoginPage = () => {
     try {
       console.log('Starting login process...');
       
-      // Use login options with PKCE
+      // Clear any URL parameters or tokens first
+      KeycloakService.clearUrlParameters();
+      
+      // Use login options with PKCE and force fresh login
       KeycloakService.doLogin({
         redirectUri: window.location.origin + '/dashboard',
-        pkceMethod: 'S256'
+        pkceMethod: 'S256',
+        prompt: 'login'  // Force fresh authentication
       });
     } catch (error) {
       console.error("Login error:", error);

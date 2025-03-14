@@ -34,6 +34,27 @@ let tokenUpdateCallback = null;
     needsCleanup = true;
   }
   
+  // Clear Keycloak storage on load - critical for resolving nonce issues
+  try {
+    console.log('EMERGENCY CLEANUP: Clearing all Keycloak localStorage items');
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('kc-') || key.includes('keycloak') || key.includes('token') || key.includes('nonce')) {
+        console.log('Removing localStorage item:', key);
+        localStorage.removeItem(key);
+      }
+    });
+    
+    // Clear session storage too
+    Object.keys(sessionStorage).forEach(key => {
+      if (key.startsWith('kc-') || key.includes('keycloak') || key.includes('token') || key.includes('nonce')) {
+        console.log('Removing sessionStorage item:', key);
+        sessionStorage.removeItem(key);
+      }
+    });
+  } catch (e) {
+    console.error('Error clearing storage:', e);
+  }
+  
   if (needsCleanup) {
     console.log('EMERGENCY CLEANUP: Replacing URL with cleaned version');
     window.history.replaceState({}, document.title, url.toString());
@@ -194,16 +215,35 @@ const initKeycloak = (onAuthenticatedCallback, onTokenUpdateCallback, options = 
   console.log('Starting Keycloak initialization');
   
   try {
+    // Clear any existing Keycloak instances and local storage to ensure clean state
+    keycloakInstance = null;
+    try {
+      console.log('Clearing Keycloak storage before initialization');
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('kc-') || key.includes('keycloak') || key.includes('token') || key.includes('nonce')) {
+          localStorage.removeItem(key);
+        }
+      });
+      Object.keys(sessionStorage).forEach(key => {
+        if (key.startsWith('kc-') || key.includes('keycloak') || key.includes('token') || key.includes('nonce')) {
+          sessionStorage.removeItem(key);
+        }
+      });
+    } catch (e) {
+      console.warn('Error clearing storage:', e);
+    }
+    
     const keycloak = getKeycloakInstance();
     
-    // Default initialization options - PKCE enabled
+    // Default initialization options - PKCE enabled with force login mode
     const defaultOptions = {
-      onLoad: 'check-sso',
+      onLoad: options.forceLogin ? 'login-required' : 'check-sso',
       checkLoginIframe: false,      // Disable iframe check
       enableLogging: true,
       pkceMethod: 'S256',           // Enable PKCE with S256 method
       silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html',
-      flow: 'standard'              // Standard flow
+      flow: 'standard',             // Standard flow
+      promiseType: 'native'         // Use native promises
     };
     
     // Merge with user provided options
@@ -250,6 +290,24 @@ const initKeycloak = (onAuthenticatedCallback, onTokenUpdateCallback, options = 
         // Reset the initialization promise so we can try again
         initializationPromise = null;
         
+        // For nonce errors, attempt to recover by forcing a full login
+        const errorStr = error?.toString() || '';
+        if (errorStr.includes('nonce') || errorStr.includes('token')) {
+          console.log('Detected nonce/token error, clearing storage and redirecting to login page');
+          
+          // Clear all storage
+          try {
+            Object.keys(localStorage).forEach(key => localStorage.removeItem(key));
+            Object.keys(sessionStorage).forEach(key => sessionStorage.removeItem(key));
+          } catch (e) {
+            console.warn('Error clearing all storage:', e);
+          }
+          
+          // Force login redirect
+          window.location.href = '/login';
+          return false;
+        }
+        
         // Throw a properly formatted error message
         let errorMessage = 'Unknown error';
         if (error) {
@@ -282,11 +340,30 @@ const doLogin = (options = {}) => {
   try {
     console.log('Attempting login with options:', options);
     
+    // Clear storage first to ensure a clean login
+    try {
+      console.log('Clearing storage before login');
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('kc-') || key.includes('keycloak') || key.includes('token') || key.includes('nonce')) {
+          localStorage.removeItem(key);
+        }
+      });
+      Object.keys(sessionStorage).forEach(key => {
+        if (key.startsWith('kc-') || key.includes('keycloak') || key.includes('token') || key.includes('nonce')) {
+          sessionStorage.removeItem(key);
+        }
+      });
+    } catch (e) {
+      console.warn('Error clearing storage before login:', e);
+    }
+    
     // Use options with PKCE
     const loginOptions = {
       ...options,
       // Enable PKCE
-      pkceMethod: 'S256'
+      pkceMethod: 'S256',
+      // Add prompt=login to force fresh authentication
+      prompt: 'login'
     };
     
     // Always specify the redirect URI if not provided
@@ -295,6 +372,9 @@ const doLogin = (options = {}) => {
     }
     
     console.log('Modified login options:', loginOptions);
+    
+    // Recreate Keycloak instance to ensure clean state
+    keycloakInstance = null;
     return getKeycloakInstance().login(loginOptions);
   } catch (error) {
     console.error('Error during login attempt:', error);
