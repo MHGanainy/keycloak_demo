@@ -13,96 +13,48 @@ import Profile from './pages/Profile';
 // Import services
 import KeycloakService from './services/KeycloakService';
 
-// IMMEDIATELY CHECK FOR ERROR IN URL
-// This runs immediately when the module is loaded
-if (window.location.href.includes('error=') || 
-    window.location.href.includes('code_challenge_method')) {
-  console.log('APP.JS - EMERGENCY: Error parameters detected in URL. Cleaning up...');
-  const url = new URL(window.location.href);
-  url.hash = '';
-  url.search = '';
-  window.history.replaceState({}, document.title, url.toString());
-}
-
 function App() {
   // Define all hooks at the top level - no conditionals before hooks
   const [keycloakInitialized, setKeycloakInitialized] = useState(false);
-  const [initializationError, setInitializationError] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const initializationAttempted = useRef(false);
-  const isInSilentCheckIframe = KeycloakService.isInSilentCheckIframe();
   
-  // Special handling for error parameters in URL - ALWAYS define hooks at top level
-  useEffect(() => {
-    // Skip if in iframe
-    if (isInSilentCheckIframe) return;
-    
-    // Don't initialize if we have a hash or search params - this helps avoid loops
-    if (window.location.hash || window.location.search) {
-      console.log('Skipping Keycloak initialization because URL has parameters');
-      return;
-    }
-    
+  // Check for authentication parameters in URL hash
+  const hasAuthParams = window.location.hash && 
+                       window.location.hash.includes('state=') && 
+                       window.location.hash.includes('code=');
+  
+  // Handle Keycloak initialization including when returning from authentication
+  useEffect(() => {    
     const setupKeycloak = async () => {
-      // Only attempt initialization once
-      if (initializationAttempted.current) return;
+      // Prevent multiple initialization attempts
+      if (initializationAttempted.current) {
+        console.log('Initialization already attempted, skipping');
+        return;
+      }
+      
       initializationAttempted.current = true;
+      console.log('Starting Keycloak setup...', { hasAuthParams, pathname: window.location.pathname });
       
       try {
-        console.log('Starting Keycloak setup...');
+        // Initialize Keycloak with proper options
+        const authenticated = await KeycloakService.init({
+          checkLoginIframe: false,
+          pkceMethod: 'S256'
+        });
         
-        // Use a simpler initialization approach with recovery for nonce errors
-        await KeycloakService.initKeycloak(
-          () => {
-            console.log("Authentication callback triggered");
-          },
-          null,
-          { 
-            // Add recovery options
-            checkLoginIframe: false,
-            silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html',
-            pkceMethod: 'S256'
-          }
-        );
-        
-        console.log('Keycloak setup completed successfully');
+        console.log('Keycloak setup completed successfully, authenticated:', authenticated);
+        setIsAuthenticated(authenticated);
         setKeycloakInitialized(true);
       } catch (error) {
         console.error("Failed to initialize Keycloak:", error);
-        
-        // Clear storage on errors
-        try {
-          Object.keys(localStorage).forEach(key => {
-            if (key.startsWith('kc-') || key.includes('keycloak') || key.includes('token') || key.includes('nonce')) {
-              localStorage.removeItem(key);
-            }
-          });
-          Object.keys(sessionStorage).forEach(key => {
-            if (key.startsWith('kc-') || key.includes('keycloak') || key.includes('token') || key.includes('nonce')) {
-              sessionStorage.removeItem(key);
-            }
-          });
-        } catch (e) {
-          console.warn('Error clearing storage on init error:', e);
-        }
-        
-        // Special handling for PKCE errors - directly go to login
-        if (error.message && (
-            error.message.includes('code_challenge_method') || 
-            error.message.includes('nonce') ||
-            error.message.includes('token')
-        )) {
-          console.log('PKCE/nonce error detected - redirecting to login page');
-          KeycloakService.clearUrlParameters();
-          window.location.href = '/login';
-          return;
-        }
-        
-        setInitializationError(error?.message || "Failed to initialize authentication");
+        // Still set initialized to true to avoid getting stuck in loading state
+        setKeycloakInitialized(true);
       }
     };
     
     setupKeycloak();
-  }, [isInSilentCheckIframe])
+  }, [hasAuthParams]);
   
   // Protected route component
   const PrivateRoute = ({ children }) => {
@@ -111,52 +63,7 @@ function App() {
     }
     return children;
   };
-  
-  // Admin route component
-  const AdminRoute = ({ children }) => {
-    if (!KeycloakService.isLoggedIn() || !KeycloakService.hasRole('admin')) {
-      return <Navigate to="/dashboard" />;
-    }
-    return children;
-  };
-  
-  // Conditional rendering based on component state (not conditional hooks)
-  if (isInSilentCheckIframe) {
-    return (
-      <div className="text-center">
-        <p>Processing authentication...</p>
-      </div>
-    );
-  }
-  
-  // Display initialization error if one occurred
-  if (initializationError) {
-    return (
-      <div className="container mt-5">
-        <div className="alert alert-danger" role="alert">
-          <h4 className="alert-heading">Authentication Error</h4>
-          <p>{initializationError}</p>
-          <hr />
-          <p className="mb-0">
-            Please try again or contact support if the issue persists.
-          </p>
-          <div className="mt-3 d-flex gap-2">
-            <button 
-              className="btn btn-primary" 
-              onClick={() => {
-                // Clear all URL parameters and go to login
-                KeycloakService.clearUrlParameters();
-                window.location.href = '/login';
-              }}
-            >
-              Return to Login
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-  
+
   // Display loading spinner while initializing
   if (!keycloakInitialized) {
     return (
@@ -165,6 +72,20 @@ function App() {
           <span className="visually-hidden">Loading...</span>
         </div>
         <span className="ms-2">Initializing application...</span>
+      </div>
+    );
+  }
+  
+  // If at root path with auth params and authenticated, redirect to dashboard directly
+  if (window.location.pathname === '/' && hasAuthParams && isAuthenticated) {
+    console.log('At root with auth params and authenticated, redirecting to dashboard');
+    window.location.href = '/dashboard';
+    return (
+      <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Loading...</span>
+        </div>
+        <span className="ms-2">Redirecting to dashboard...</span>
       </div>
     );
   }
